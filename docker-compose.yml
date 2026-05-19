@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://productwhisper:productwhisper@postgres:5432/productwhisper
+      - REDIS_URL=redis://redis:6379
+      - MASTER_API_KEY=${MASTER_API_KEY:-pw-dev-key-change-me}
+      - SENTIMENT_API_URL=http://sentiment:8001
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - NODE_ENV=production
+      - PORT=3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["node", "dist/workers/index.js"]
+    environment:
+      - DATABASE_URL=postgresql://productwhisper:productwhisper@postgres:5432/productwhisper
+      - REDIS_URL=redis://redis:6379
+      - MASTER_API_KEY=${MASTER_API_KEY:-pw-dev-key-change-me}
+      - SENTIMENT_API_URL=http://sentiment:8001
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  sentiment:
+    build: ./python-services/sentiment
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: productwhisper
+      POSTGRES_PASSWORD: productwhisper
+      POSTGRES_DB: productwhisper
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U productwhisper"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

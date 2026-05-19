@@ -1,0 +1,64 @@
+import Fastify from 'fastify';
+import { serverConfig } from '@/config';
+import { setupPlugins } from '@/api/plugins';
+import { registerRoutes } from '@/api/routes';
+import { errorHandler } from '@/api/middleware/errorHandler';
+import { connectDatabase, disconnectDatabase } from '@/infrastructure/database/prisma';
+import { connectRedis, disconnectRedis } from '@/infrastructure/cache/redis';
+import { closeAllQueues } from '@/infrastructure/queue/bullmq';
+
+const fastify = Fastify({
+  logger: {
+    level: serverConfig.nodeEnv === 'production' ? 'info' : 'debug',
+    transport: serverConfig.nodeEnv === 'development'
+      ? { target: 'pino-pretty', options: { colorize: true } }
+      : undefined,
+  },
+  requestIdHeader: 'x-request-id',
+  genReqId: () => crypto.randomUUID(),
+});
+
+fastify.setErrorHandler(errorHandler);
+
+async function start(): Promise<void> {
+  try {
+    await connectDatabase();
+    fastify.log.info('Database connected');
+
+    await connectRedis();
+    fastify.log.info('Redis connected');
+
+    await setupPlugins(fastify);
+    fastify.log.info('Plugins registered');
+
+    await fastify.register(registerRoutes, { prefix: '/api/v1' });
+    fastify.log.info('Routes registered');
+
+    fastify.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+
+    await fastify.listen({ port: serverConfig.port, host: '0.0.0.0' });
+    fastify.log.info(`Server running on port ${serverConfig.port}`);
+
+    if (serverConfig.nodeEnv === 'development') {
+      fastify.log.info(`Swagger docs at http://localhost:${serverConfig.port}/docs`);
+    }
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+}
+
+async function shutdown(): Promise<void> {
+  fastify.log.info('Shutting down...');
+  await fastify.close();
+  await closeAllQueues();
+  await disconnectRedis();
+  await disconnectDatabase();
+  fastify.log.info('Shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+start();
