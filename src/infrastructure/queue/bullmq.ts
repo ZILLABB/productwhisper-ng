@@ -2,10 +2,13 @@ import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import { dbConfig } from '@/config';
 import { QUEUE_NAMES } from '@/shared/constants';
 
-const connection = {
-  host: new URL(dbConfig.redisUrl).hostname || 'localhost',
-  port: parseInt(new URL(dbConfig.redisUrl).port || '6379'),
-};
+let connection: { host: string; port: number };
+try {
+  const url = new URL(dbConfig.redisUrl);
+  connection = { host: url.hostname || 'localhost', port: parseInt(url.port || '6379') };
+} catch {
+  connection = { host: 'localhost', port: 6379 };
+}
 
 // ─── Queues ─────────────────────────────────────────────
 

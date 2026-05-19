@@ -5,7 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { corsConfig, rateLimitConfig, serverConfig } from '@/config';
-import { getRedis } from '@/infrastructure/cache/redis';
+import { isRedisAvailable, getRedis } from '@/infrastructure/cache/redis';
 
 export async function setupPlugins(fastify: FastifyInstance): Promise<void> {
   await fastify.register(cors, {
@@ -18,14 +18,19 @@ export async function setupPlugins(fastify: FastifyInstance): Promise<void> {
     contentSecurityPolicy: serverConfig.nodeEnv === 'production',
   });
 
-  await fastify.register(rateLimit, {
+  const rateLimitOpts: Record<string, unknown> = {
     max: rateLimitConfig.maxRequests,
     timeWindow: rateLimitConfig.windowMs,
-    redis: getRedis(),
-    keyGenerator: (request) => {
+    keyGenerator: (request: any) => {
       return request.headers['x-api-key'] as string || request.ip;
     },
-  });
+  };
+
+  if (isRedisAvailable()) {
+    rateLimitOpts.redis = getRedis();
+  }
+
+  await fastify.register(rateLimit, rateLimitOpts as any);
 
   if (serverConfig.nodeEnv === 'development') {
     await fastify.register(swagger, {
