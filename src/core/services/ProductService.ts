@@ -60,6 +60,7 @@ export class ProductService {
         where: where as any,
         include: {
           listings: { take: 5, orderBy: { price: 'asc' } },
+          sentimentAnalyses: { take: 1, orderBy: { analyzedAt: 'desc' } },
           trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
           _count: { select: { listings: true, sentimentAnalyses: true } },
         },
@@ -80,16 +81,29 @@ export class ProductService {
     const cached = await cacheGet(ck);
     if (cached) return { product: cached, cacheHit: true };
 
-    const product = await prisma.product.findUnique({
-      where: { id },
-      include: {
-        listings: { orderBy: { price: 'asc' }, include: { vendor: true } },
-        sentimentAnalyses: { take: 5, orderBy: { analyzedAt: 'desc' } },
-        trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
-        aliases: true,
-        _count: { select: { listings: true, sentimentAnalyses: true } },
-      },
-    });
+    // Support lookup by UUID or slug
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const product = isUuid
+      ? await prisma.product.findUnique({
+          where: { id },
+          include: {
+            listings: { orderBy: { price: 'asc' }, include: { vendor: true } },
+            sentimentAnalyses: { take: 5, orderBy: { analyzedAt: 'desc' } },
+            trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
+            aliases: true,
+            _count: { select: { listings: true, sentimentAnalyses: true } },
+          },
+        })
+      : await prisma.product.findUnique({
+          where: { slug: id },
+          include: {
+            listings: { orderBy: { price: 'asc' }, include: { vendor: true } },
+            sentimentAnalyses: { take: 5, orderBy: { analyzedAt: 'desc' } },
+            trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
+            aliases: true,
+            _count: { select: { listings: true, sentimentAnalyses: true } },
+          },
+        });
 
     if (!product) throw new NotFoundError('Product');
 
@@ -176,6 +190,8 @@ export class ProductService {
       where: { isActive: true },
       include: {
         listings: { take: 3, orderBy: { price: 'asc' } },
+        sentimentAnalyses: { take: 1, orderBy: { analyzedAt: 'desc' } },
+        trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
         _count: { select: { listings: true, sentimentAnalyses: true } },
       },
       orderBy: { updatedAt: 'desc' },

@@ -9,6 +9,7 @@ module.exports = {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
+  testMatch: ['**/tests/**/*.test.ts'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
@@ -16,4 +17,5 @@ module.exports = {
   ],
   coverageDirectory: 'coverage',
   testTimeout: 30000,
+  verbose: true,
 };

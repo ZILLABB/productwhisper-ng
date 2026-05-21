@@ -4,10 +4,11 @@ import { cacheGet, cacheSet, cacheConfig } from '@/infrastructure/cache/redis';
 import { cacheKey } from '@/shared/utils';
 import { CACHE_PREFIXES } from '@/shared/constants';
 import { externalConfig } from '@/config';
-import { ExternalServiceError, NotFoundError } from '@/shared/errors';
+import { NotFoundError } from '@/shared/errors';
+import { sentimentEngine } from './NigerianSentimentEngine';
 import type { SentimentResult } from '@/shared/types';
 
-interface PythonSentimentResponse {
+interface SentimentResponse {
   sentiment_score: number;
   confidence: number;
   key_complaints: string[];
@@ -18,6 +19,7 @@ interface PythonSentimentResponse {
 
 export class SentimentService {
   private sentimentApiUrl: string;
+  private externalApiAvailable: boolean | null = null;
 
   constructor() {
     this.sentimentApiUrl = externalConfig.sentimentApiUrl;
@@ -98,37 +100,62 @@ export class SentimentService {
     return { sentiment, cacheHit: false };
   }
 
-  async analyzeText(text: string, context = 'product_review'): Promise<PythonSentimentResponse> {
-    try {
-      const response = await axios.post(`${this.sentimentApiUrl}/analyze`, {
-        text,
-        context,
-      }, { timeout: 15000 });
+  /**
+   * Analyze a single text. Tries external Python API first,
+   * falls back to the built-in Nigerian Sentiment Engine.
+   */
+  async analyzeText(text: string, context = 'product_review', rating?: number | null): Promise<SentimentResponse> {
+    // Try external API if it was previously available (or unknown)
+    if (this.externalApiAvailable !== false) {
+      try {
+        const response = await axios.post(`${this.sentimentApiUrl}/analyze`, {
+          text,
+          context,
+        }, { timeout: 10000 });
 
-      return response.data;
-    } catch (err) {
-      console.error('Sentiment API error:', err instanceof Error ? err.message : err);
-      return this.fallbackAnalysis(text);
+        this.externalApiAvailable = true;
+        return response.data;
+      } catch (err) {
+        if (this.externalApiAvailable === null) {
+          console.log('[sentiment] External API unavailable — using built-in Nigerian Sentiment Engine');
+        }
+        this.externalApiAvailable = false;
+      }
     }
+
+    // Built-in engine (always available)
+    return this.builtInAnalysis(text, rating);
   }
 
-  async analyzeBatch(texts: { id: string; text: string }[]): Promise<Map<string, PythonSentimentResponse>> {
-    const results = new Map<string, PythonSentimentResponse>();
+  /**
+   * Analyze a batch of texts. Tries external API first,
+   * falls back to the built-in engine per-item.
+   */
+  async analyzeBatch(texts: { id: string; text: string; rating?: number | null }[]): Promise<Map<string, SentimentResponse>> {
+    const results = new Map<string, SentimentResponse>();
 
-    try {
-      const response = await axios.post(`${this.sentimentApiUrl}/analyze/batch`, {
-        texts: texts.map(t => ({ id: t.id, text: t.text })),
-      }, { timeout: 60000 });
+    // Try external batch API
+    if (this.externalApiAvailable !== false) {
+      try {
+        const response = await axios.post(`${this.sentimentApiUrl}/analyze/batch`, {
+          texts: texts.map(t => ({ id: t.id, text: t.text })),
+        }, { timeout: 60000 });
 
-      for (const item of response.data.results) {
-        results.set(item.id, item);
-      }
-    } catch {
-      for (const t of texts) {
-        results.set(t.id, this.fallbackAnalysis(t.text));
+        this.externalApiAvailable = true;
+        for (const item of response.data.results) {
+          results.set(item.id, item);
+        }
+        return results;
+      } catch {
+        this.externalApiAvailable = false;
       }
     }
 
+    // Built-in batch analysis
+    const engineResults = sentimentEngine.analyzeBatch(texts);
+    for (const [id, result] of engineResults) {
+      results.set(id, result);
+    }
     return results;
   }
 
@@ -140,7 +167,11 @@ export class SentimentService {
 
     if (reviews.length === 0) return 0;
 
-    const texts = reviews.map(r => ({ id: r.id, text: `${r.title ?? ''} ${r.content}`.trim() }));
+    const texts = reviews.map(r => ({
+      id: r.id,
+      text: `${r.title ?? ''} ${r.content}`.trim(),
+      rating: r.rating,
+    }));
     const results = await this.analyzeBatch(texts);
 
     let stored = 0;
@@ -176,42 +207,40 @@ export class SentimentService {
     return stored;
   }
 
-  async healthCheck(): Promise<boolean> {
+  /**
+   * Health check that reports both external API and built-in engine status.
+   */
+  async healthCheck(): Promise<{ external: boolean; builtin: boolean; overall: boolean }> {
+    let external = false;
     try {
       const response = await axios.get(`${this.sentimentApiUrl}/health`, { timeout: 5000 });
-      return response.status === 200;
+      external = response.status === 200;
+      this.externalApiAvailable = external;
     } catch {
-      return false;
+      this.externalApiAvailable = false;
     }
-  }
 
-  private fallbackAnalysis(text: string): PythonSentimentResponse {
-    const lower = text.toLowerCase();
-    const positiveWords = ['good', 'great', 'excellent', 'amazing', 'love', 'best', 'perfect', 'recommend', 'quality', 'fast', 'nice', 'wonderful', 'fantastic'];
-    const negativeWords = ['bad', 'terrible', 'worst', 'hate', 'broken', 'fake', 'scam', 'poor', 'waste', 'slow', 'cheap', 'disappointed', 'refund', 'fraud'];
-    const scamWords = ['scam', 'fake', 'fraud', 'counterfeit', 'not original', 'not genuine', 'different from', 'not as described', 'ripoff'];
-
-    let posCount = 0;
-    let negCount = 0;
-    for (const w of positiveWords) if (lower.includes(w)) posCount++;
-    for (const w of negativeWords) if (lower.includes(w)) negCount++;
-
-    const total = posCount + negCount || 1;
-    const score = (posCount - negCount) / total;
-    const scamSignals = scamWords.filter(w => lower.includes(w));
-
-    const complaints: string[] = [];
-    const praises: string[] = [];
-    for (const w of negativeWords) if (lower.includes(w)) complaints.push(w);
-    for (const w of positiveWords) if (lower.includes(w)) praises.push(w);
+    const builtin = sentimentEngine.healthCheck();
 
     return {
-      sentiment_score: Math.max(-1, Math.min(1, score)),
-      confidence: 0.3,
-      key_complaints: complaints.slice(0, 5),
-      key_praises: praises.slice(0, 5),
-      scam_signals: scamSignals,
-      label: score > 0.1 ? 'positive' : score < -0.1 ? 'negative' : 'neutral',
+      external,
+      builtin,
+      overall: builtin || external, // We're good if at least the built-in works
+    };
+  }
+
+  /**
+   * Built-in analysis using the Nigerian Sentiment Engine
+   */
+  private builtInAnalysis(text: string, rating?: number | null): SentimentResponse {
+    const result = sentimentEngine.analyze(text, 'product_review', rating);
+    return {
+      sentiment_score: result.sentiment_score,
+      confidence: result.confidence,
+      key_complaints: result.key_complaints,
+      key_praises: result.key_praises,
+      scam_signals: result.scam_signals,
+      label: result.label,
     };
   }
 }

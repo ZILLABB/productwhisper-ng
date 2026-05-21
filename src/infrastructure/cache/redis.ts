@@ -14,6 +14,8 @@ export function getRedis(): Redis {
       keyPrefix: 'pwng:',
       retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 2000)),
     });
+    // Suppress noisy reconnect errors when Redis is not running
+    redis.on('error', () => {});
   }
   return redis;
 }

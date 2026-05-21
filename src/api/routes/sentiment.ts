@@ -16,7 +16,7 @@ export async function sentimentRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.post('/analyze', async (request, reply) => {
-    const { text } = request.body as { text: string };
+    const { text, rating } = request.body as { text: string; rating?: number };
 
     if (!text || text.length < 10) {
       return reply.status(400).send({
@@ -26,13 +26,13 @@ export async function sentimentRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    const result = await service.analyzeText(text);
+    const result = await service.analyzeText(text, 'product_review', rating);
 
     return reply.send(successResponse(result));
   });
 
   fastify.post('/batch', async (request, reply) => {
-    const { texts } = request.body as { texts: string[] };
+    const { texts } = request.body as { texts: Array<string | { text: string; rating?: number }> };
 
     if (!texts || !Array.isArray(texts) || texts.length === 0) {
       return reply.status(400).send({
@@ -50,18 +50,27 @@ export async function sentimentRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    const items = texts.map((t, i) => ({ id: String(i), text: t }));
+    const items = texts.map((t, i) => {
+      if (typeof t === 'string') {
+        return { id: String(i), text: t };
+      }
+      return { id: String(i), text: t.text, rating: t.rating };
+    });
     const results = await service.analyzeBatch(items);
 
     return reply.send(successResponse(Array.from(results.values())));
   });
 
   fastify.get('/health', async (request, reply) => {
-    const healthy = await service.healthCheck();
+    const health = await service.healthCheck();
 
     return reply.send(successResponse({
-      sentimentService: healthy ? 'healthy' : 'degraded',
-      fallbackAvailable: true,
+      status: health.overall ? 'operational' : 'degraded',
+      externalApi: health.external ? 'connected' : 'unavailable',
+      builtinEngine: health.builtin ? 'ready' : 'error',
+      note: health.external
+        ? 'Using external Python sentiment API'
+        : 'Using built-in Nigerian Sentiment Engine (keyword + rule-based)',
     }));
   });
 }

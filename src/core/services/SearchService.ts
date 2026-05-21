@@ -36,6 +36,8 @@ export class SearchService {
         where: where as any,
         include: {
           listings: { take: 3, orderBy: { price: 'asc' } },
+          sentimentAnalyses: { take: 1, orderBy: { analyzedAt: 'desc' } },
+          trustScores: { take: 1, orderBy: { computedAt: 'desc' } },
           _count: { select: { listings: true, sentimentAnalyses: true } },
         },
         orderBy: { updatedAt: 'desc' },

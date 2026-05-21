@@ -34,7 +34,16 @@ async function start(): Promise<void> {
     await fastify.register(registerRoutes, { prefix: '/api/v1' });
     fastify.log.info('Routes registered');
 
-    fastify.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
+    fastify.get('/health', async () => ({
+      status: 'ok',
+      version: '1.0.0',
+      uptime: Math.round(process.uptime()),
+      memory: {
+        rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        heap: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      },
+      timestamp: new Date().toISOString(),
+    }));
 
     await fastify.listen({ port: serverConfig.port, host: '0.0.0.0' });
     fastify.log.info(`Server running on port ${serverConfig.port}`);
