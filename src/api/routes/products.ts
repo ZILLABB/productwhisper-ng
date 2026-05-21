@@ -7,6 +7,13 @@ import { apiKeyAuth } from '@/api/middleware/auth';
 const service = new ProductService();
 
 export async function productRoutes(fastify: FastifyInstance): Promise<void> {
+  // GET /products — list all products (paginated)
+  fastify.get('/', async (request, reply) => {
+    const { page, limit } = PaginationSchema.parse(request.query);
+    const result = await service.searchProducts('', {}, { page, limit }, 'newest');
+    return reply.send(paginatedResponse(result.products, page, limit, result.total));
+  });
+
   fastify.get('/search', async (request, reply) => {
     const query = ProductSearchSchema.merge(PaginationSchema).parse(request.query);
     const { q, category, brand, minPrice, maxPrice, condition, platform, sortBy, page, limit } = query;

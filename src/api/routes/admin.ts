@@ -15,7 +15,8 @@ const sentiment = new SentimentService();
 export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ─── Ingestion: Direct Scrape ────────────────────────
-  fastify.post('/ingest', async (request, reply) => {
+  // Long timeout — enrichment fetches details+reviews per product
+  fastify.post('/ingest', { config: { requestTimeout: 300_000 } } as any, async (request, reply) => {
     const { platform, query, maxResults } = request.body as {
       platform: string;
       query: string;

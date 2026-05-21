@@ -25,7 +25,37 @@ export class IngestionService {
 
     for (const item of scraped) {
       try {
-        const result = await this.processScrapedProduct(item, platform as Platform);
+        // Enrich each product with full details (JSON-LD data, reviews, description, etc.)
+        let enriched = item;
+        try {
+          const details = await scraper.getProductDetails(item.url);
+          if (details) {
+            enriched = {
+              ...item,
+              description: details.description || item.description,
+              imageUrl: details.imageUrl || item.imageUrl,
+              vendor: details.vendor || item.vendor,
+              reviews: details.reviews || item.reviews,
+              metadata: { ...(item.metadata || {}), ...(details.metadata || {}) },
+            };
+          }
+        } catch (detailErr) {
+          console.warn(`Could not fetch details for ${item.title}:`, detailErr instanceof Error ? detailErr.message : detailErr);
+        }
+
+        // If no reviews from details, try dedicated review scraping
+        if (!enriched.reviews || enriched.reviews.length === 0) {
+          try {
+            const reviews = await scraper.getProductReviews(item.url, 1);
+            if (reviews.length > 0) {
+              enriched = { ...enriched, reviews };
+            }
+          } catch (revErr) {
+            // Reviews are optional, don't fail the whole ingestion
+          }
+        }
+
+        const result = await this.processScrapedProduct(enriched, platform as Platform);
         if (result.isNew) productsIngested++;
         listingsCreated++;
         reviewsCollected += result.reviewCount;
@@ -129,7 +159,7 @@ export class IngestionService {
             title: review.title,
             content: review.content,
             helpfulCount: review.helpfulCount ?? 0,
-            postedAt: review.postedAt ? new Date(review.postedAt) : null,
+            postedAt: review.postedAt && !isNaN(new Date(review.postedAt).getTime()) ? new Date(review.postedAt) : null,
           },
         });
         count++;
