@@ -5,6 +5,7 @@ import { sentimentRoutes } from './sentiment';
 import { trustRoutes } from './trust';
 import { searchRoutes } from './search';
 import { adminRoutes } from './admin';
+import { contactRoutes } from './contact';
 import { apiKeyAuth } from '@/api/middleware/auth';
 
 export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
@@ -16,4 +17,5 @@ export async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.register(trustRoutes, { prefix: '/trust' });
   fastify.register(searchRoutes, { prefix: '/search' });
   fastify.register(adminRoutes, { prefix: '/admin' });
+  fastify.register(contactRoutes, { prefix: '/contact' });
 }
