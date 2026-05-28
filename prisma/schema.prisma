@@ -59,6 +59,16 @@ model Product {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // ─── Structured Attributes (canonical product identity) ──
+  model_name   String?  @map("model_name") @db.VarChar(300)
+  storage      String?  @db.VarChar(20)
+  ram          String?  @db.VarChar(20)
+  color        String?  @db.VarChar(100)
+  variant      String?  @db.VarChar(200)
+  productCondition  String?  @map("product_condition") @db.VarChar(50)
+  generation   String?  @db.VarChar(100)
+  isAccessory  Boolean  @default(false) @map("is_accessory")
+
   listings          ProductListing[]
   aliases           ProductAlias[]
   sentimentAnalyses SentimentAnalysis[]
@@ -69,6 +79,8 @@ model Product {
   @@index([brand])
   @@index([category])
   @@index([slug])
+  @@index([model_name])
+  @@index([isAccessory])
   @@map("products")
 }
 

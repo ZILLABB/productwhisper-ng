@@ -2,6 +2,7 @@ import { prisma } from '@/infrastructure/database/prisma';
 import { getScraper, getNairalandScraper, getYouTubeScraper } from '@/infrastructure/scrapers';
 import { addSentimentJob, addTrustComputeJob, addPriceUpdateJob } from '@/infrastructure/queue/bullmq';
 import { classifyCondition, extractBrand, slugify, normalizeProductName } from '@/shared/utils';
+import { extractAttributes } from '@/core/matching';
 import { ProductService } from './ProductService';
 import { PriceService } from './PriceService';
 import type { ScrapedProduct, ScrapedReview, ScrapedVendor } from '@/shared/types';

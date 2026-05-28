@@ -3,6 +3,7 @@ import { cacheGet, cacheSet, cacheDelPattern, cacheConfig } from '@/infrastructu
 import { cacheKey, slugify, normalizeProductName, similarityScore, trigramSimilarity, extractBrand } from '@/shared/utils';
 import { CACHE_PREFIXES } from '@/shared/constants';
 import { NotFoundError, DatabaseError } from '@/shared/errors';
+import { extractAttributes } from '@/core/matching';
 import type { PaginationParams } from '@/shared/types';
 import type { ProductCondition, Platform } from '@prisma/client';
 
@@ -151,12 +152,22 @@ export class ProductService {
 
     const detectedBrand = brand ?? extractBrand(name);
 
+    // Extract structured attributes from the product name
+    const attrs = extractAttributes(name);
+
     return prisma.product.create({
       data: {
         name: normalized,
         slug,
-        brand: detectedBrand,
-        category,
+        brand: detectedBrand || attrs.brand,
+        category: category || attrs.category,
+        model_name: attrs.model,
+        storage: attrs.storage,
+        ram: attrs.ram,
+        color: attrs.color,
+        variant: attrs.variant,
+        productCondition: attrs.condition,
+        isAccessory: attrs.isAccessory,
       },
     });
   }

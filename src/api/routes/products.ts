@@ -6,6 +6,7 @@ import { ProductSearchSchema, PaginationSchema, ScrapedProduct } from '@/shared/
 import { successResponse, paginatedResponse } from '@/shared/utils';
 import { apiKeyAuth } from '@/api/middleware/auth';
 import { cacheGet, cacheSet } from '@/infrastructure/cache/redis';
+import { matchProducts, extractAttributes } from '@/core/matching';
 
 const service = new ProductService();
 const ingestionService = new IngestionService();
@@ -13,212 +14,6 @@ const ingestionService = new IngestionService();
 /* ─── Live-search cache config ─────────────────────────── */
 const LIVE_SEARCH_CACHE_TTL = 900;   // 15 minutes — Redis/memory layer
 const LIVE_SEARCH_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours — DB layer
-
-/* ─── Product Matching Helpers ───────────────────────────── */
-
-/** Normalize a product title for fuzzy matching */
-function normalizeTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[''""]/g, '')                     // smart quotes
-    .replace(/\s*[-–—/|,]\s*/g, ' ')            // separators
-    .replace(/\b(brand new|uk used|fairly used|used|refurbished|original)\b/gi, '')
-    .replace(/\b(free delivery|free shipping|fast shipping)\b/gi, '')
-    .replace(/\b(lagos|abuja|nigeria|naija)\b/gi, '')
-    .replace(/\b\d+\s*%\s*off\b/gi, '')         // "30% off"
-    .replace(/[^a-z0-9\s.]/g, ' ')              // non-alpha
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Extract key product signature: brand + model + storage/size.
- *  Strips colors, conditions, and noise to produce a canonical form
- *  e.g. "apple iphone 15 pro max 256gb black" → "iphone 15 pro max 256gb"
- */
-function extractSignature(normalized: string): string {
-  let sig = normalized
-    // Remove common color words
-    .replace(/\b(black|white|blue|green|red|gold|silver|grey|gray|purple|pink|yellow|natural titanium|desert titanium|cream|graphite|midnight|starlight|sierra)\b/g, '')
-    // Remove condition words
-    .replace(/\b(new|brand new|uk used|fairly used|used|refurbished|original|sealed)\b/g, '')
-    // Remove noise/filler
-    .replace(/\b(for|with|and|the|in|on|to|of|a|an|dual|sim|nano|single)\b/g, '')
-    // Remove dimension descriptions like 6.1" or 6.7-inch
-    .replace(/\d+\.\d+\s*["'']\s*/g, '')
-    .replace(/\d+\.\d+\s*inch/g, '')
-    // Normalize storage: "128 gb" → "128gb"
-    .replace(/(\d+)\s*(gb|tb)/g, '$1$2')
-    // Remove RAM specs like "8gb ram" (we match on storage, not RAM)
-    .replace(/\d+gb\s*ram/g, '')
-    // Remove ROM label
-    .replace(/\brom\b/g, '')
-    // Collapse spaces
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return sig;
-}
-
-/** Calculate similarity between two strings (Jaccard on word bigrams) */
-function similarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (!a || !b) return 0;
-
-  const bigramsOf = (s: string) => {
-    const words = s.split(' ').filter(w => w.length > 0);
-    const bg = new Set<string>();
-    for (let i = 0; i < words.length - 1; i++) {
-      bg.add(words[i] + ' ' + words[i + 1]);
-    }
-    // Also add individual words for short titles
-    words.forEach(w => bg.add(w));
-    return bg;
-  };
-
-  const setA = bigramsOf(a);
-  const setB = bigramsOf(b);
-  if (setA.size === 0 || setB.size === 0) return 0;
-
-  let intersection = 0;
-  for (const bg of setA) {
-    if (setB.has(bg)) intersection++;
-  }
-
-  return intersection / (setA.size + setB.size - intersection);
-}
-
-interface ProductGroup {
-  groupId: string;
-  name: string;                  // best representative title
-  listings: {
-    platform: string;
-    product: ScrapedProduct;
-    vendorName?: string;
-    trustLevel?: string;
-  }[];
-  lowestPrice: number;
-  highestPrice: number;
-  cheapestPlatform: string;
-  savings: number;
-  platformCount: number;
-}
-
-/** Group similar products across platforms */
-function groupProducts(allProducts: ScrapedProduct[]): { groups: ProductGroup[]; unmatched: ScrapedProduct[] } {
-  const THRESHOLD = 0.30; // Similarity threshold for grouping (lowered for better cross-platform matching)
-
-  // Pre-compute normalized titles and signatures
-  const items = allProducts.map((p, idx) => ({
-    product: p,
-    idx,
-    normalized: normalizeTitle(p.title),
-    signature: extractSignature(normalizeTitle(p.title)),
-    grouped: false,
-  }));
-
-  // Debug: log signatures for troubleshooting
-  if (items.length > 0) {
-    console.log('[groupProducts] Sample signatures:', items.slice(0, 5).map(i => `${i.product.platform}: "${i.signature}"`).join(' | '));
-  }
-
-  const groups: ProductGroup[] = [];
-
-  // Greedy clustering: for each unmatched product, find all similar ones
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].grouped) continue;
-
-    const anchor = items[i];
-    anchor.grouped = true;
-
-    const cluster: typeof items = [anchor];
-
-    // Find matches from OTHER platforms
-    for (let j = i + 1; j < items.length; j++) {
-      if (items[j].grouped) continue;
-      // Only match across different platforms for cross-platform comparison
-      if (items[j].product.platform === anchor.product.platform) continue;
-
-      const sim = similarity(anchor.signature, items[j].signature);
-      if (sim >= THRESHOLD) {
-        items[j].grouped = true;
-        cluster.push(items[j]);
-      }
-    }
-
-    // Only create a group if we have listings from 2+ platforms
-    if (cluster.length >= 2) {
-      const listings = cluster.map(c => {
-        const v = c.product.vendor;
-        let trustLevel: string;
-        let trustScore = 30;
-        const scamFlags: string[] = [];
-
-        if (v?.rating && v.rating >= 4) {
-          trustLevel = 'trusted'; trustScore = 85;
-        } else if (v?.rating && v.rating >= 3) {
-          trustLevel = 'average'; trustScore = 55;
-        } else if (v?.rating && v.rating < 3) {
-          trustLevel = 'caution'; trustScore = 20;
-          scamFlags.push('Low seller rating');
-        } else if (v?.isVerified) {
-          trustLevel = 'verified'; trustScore = 70;
-        } else {
-          trustLevel = v?.name ? 'unknown' : 'unknown';
-          if (!v?.name) scamFlags.push('No seller info');
-        }
-
-        // Official store boost
-        if (v?.name && /\b(official|jumia|konga)\b/i.test(v.name)) {
-          trustLevel = trustLevel === 'unknown' ? 'verified' : trustLevel;
-          trustScore = Math.max(trustScore, 75);
-        }
-
-        return {
-          platform: c.product.platform,
-          product: c.product,
-          vendorName: v?.name,
-          trustLevel,
-          trustScore,
-          scamFlags,
-        };
-      });
-
-      // Sort listings by price
-      listings.sort((a, b) => a.product.price - b.product.price);
-
-      const prices = listings.map(l => l.product.price);
-      const lowestPrice = Math.min(...prices);
-      const highestPrice = Math.max(...prices);
-
-      // Use the title from the cheapest listing (or the longest title for clarity)
-      const bestTitle = listings.reduce((best, l) =>
-        l.product.title.length > best.length ? l.product.title : best
-      , listings[0].product.title);
-
-      groups.push({
-        groupId: `grp-${groups.length + 1}`,
-        name: bestTitle,
-        listings,
-        lowestPrice,
-        highestPrice,
-        cheapestPlatform: listings[0].platform,
-        savings: highestPrice - lowestPrice,
-        platformCount: new Set(listings.map(l => l.platform)).size,
-      });
-    } else {
-      // Ungroup — mark as not grouped so it goes to unmatched
-      anchor.grouped = false;
-    }
-  }
-
-  // Sort groups by savings descending (biggest savings first)
-  groups.sort((a, b) => b.savings - a.savings);
-
-  // Collect unmatched
-  const unmatched = items.filter(i => !i.grouped).map(i => i.product);
-
-  return { groups, unmatched };
-}
 
 export async function productRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /products — list all products (paginated)
@@ -333,60 +128,26 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
       }
     }
 
-    // ── Relevance filter: remove accessories & off-topic results ──
-    const ACCESSORY_KEYWORDS = [
-      'case', 'cover', 'pouch', 'sleeve', 'skin',
-      'screen protector', 'tempered glass', 'film',
-      'charger', 'charging', 'cable', 'adapter', 'power bank',
-      'earphone', 'headphone', 'headset', 'earbud', 'airpod',
-      'holder', 'stand', 'mount', 'ring', 'grip', 'strap',
-      'stylus', 'pen', 'sticker', 'decal',
-      'sim tray', 'repair', 'replacement', 'spare part',
-      'back glass', 'lcd', 'digitizer', 'flex',
-    ];
-
+    // ── Relevance filter: phrase-based query matching ──
+    // This prevents Jumia from polluting results with promoted/sponsored unrelated products.
     const queryLower = searchQuery.toLowerCase();
-    const queryIsAccessory = ACCESSORY_KEYWORDS.some(kw => queryLower.includes(kw));
-
-    // Step 1: Remove accessories (unless the query IS for an accessory)
-    if (!queryIsAccessory) {
-      const mainProducts: typeof allProducts = [];
-      for (const p of allProducts) {
-        const titleLower = p.title.toLowerCase();
-        const isAccessory = ACCESSORY_KEYWORDS.some(kw => titleLower.includes(kw));
-        if (!isAccessory) mainProducts.push(p);
-      }
-      if (mainProducts.length >= 3) allProducts = mainProducts;
-    }
-
-    // Step 2: Query-relevance filter — drop products that don't contain
-    // the important keywords from the search query. This prevents Jumia
-    // from polluting results with promoted/sponsored unrelated products.
     const queryWords = queryLower
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
       .filter(w => w.length >= 2)
-      // Drop common filler words that don't help relevance matching
       .filter(w => !['the', 'and', 'for', 'with', 'new', 'buy', 'best', 'cheap', 'price', 'in', 'of', 'on', 'to', 'ng', 'nigeria'].includes(w));
 
     if (queryWords.length > 0) {
-      // Build a phrase regex from the query for stricter matching.
-      // "iPhone 15" should match "iPhone 15 Pro" but NOT "15+ Service Functions... iPhone"
-      // We allow optional words between query terms (up to 3 words gap).
       const phrasePattern = queryWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\W+(?:\\w+\\W+){0,3}');
       const phraseRegex = new RegExp(phrasePattern, 'i');
 
       const relevantProducts: typeof allProducts = [];
       for (const p of allProducts) {
         const titleLower = p.title.toLowerCase();
-
-        // Primary check: does the title contain the query as a near-phrase?
         if (phraseRegex.test(titleLower)) {
           relevantProducts.push(p);
           continue;
         }
-
-        // Fallback for long queries (4+ words): allow if all words present
         if (queryWords.length >= 4) {
           const matchCount = queryWords.filter(w => titleLower.includes(w)).length;
           if (matchCount >= queryWords.length - 1) {
@@ -394,7 +155,6 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
           }
         }
       }
-      // Only apply if we still have enough results
       if (relevantProducts.length >= 2) {
         allProducts = relevantProducts;
       }
@@ -403,8 +163,24 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
     // Sort by price ascending
     allProducts.sort((a, b) => a._sortPrice - b._sortPrice);
 
-    // Price summary
-    const prices = allProducts.map(p => p.price).filter(p => p > 0);
+    // Build plain products list (strip internal sorting field)
+    const plainProducts = allProducts.map(({ _sortPrice, ...p }) => p);
+
+    // ── Intelligent product matching with attribute extraction ──
+    const queryAttributes = extractAttributes(searchQuery);
+    const ACCESSORY_KEYWORDS_SIMPLE = ['case', 'cover', 'charger', 'cable', 'protector', 'sleeve', 'pouch', 'skin'];
+    const queryIsAccessory = ACCESSORY_KEYWORDS_SIMPLE.some(kw => queryLower.includes(kw));
+
+    const matchResult = matchProducts(plainProducts, {
+      queryIsAccessory,
+      minConfidence: 40,
+    });
+
+    const { groups, unmatched, filteredAsAccessories, stats: matchStats } = matchResult;
+
+    // Price summary (from all non-accessory products)
+    const relevantForPricing = queryIsAccessory ? plainProducts : plainProducts.filter(p => !filteredAsAccessories.includes(p));
+    const prices = relevantForPricing.map(p => p.price).filter(p => p > 0);
     const lowestPrice = prices.length > 0 ? Math.min(...prices) : 0;
     const highestPrice = prices.length > 0 ? Math.max(...prices) : 0;
     const averagePrice = prices.length > 0
@@ -418,13 +194,12 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
       cheapestPlatform = allProducts[0].platform;
     }
 
-    // ── Enhanced Merchant Trust Scoring ──
-    const vendorSummaries = allProducts
+    // Vendor summaries are now computed inside the matcher per-listing,
+    // but we still build a top-level summary for backward compat
+    const vendorSummaries = plainProducts
       .filter(p => p.vendor)
       .map(p => {
         const scamFlags: string[] = [];
-
-        // Scam signal: price suspiciously low
         if (averagePrice > 0 && p.price < averagePrice * 0.4) {
           scamFlags.push('Price significantly below average — verify before buying');
         }
@@ -468,10 +243,6 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
         };
       });
 
-    // Group similar products across platforms
-    const plainProducts = allProducts.map(({ _sortPrice, ...p }) => p);
-    const { groups, unmatched } = groupProducts(plainProducts);
-
     const elapsed = Date.now() - startTime;
 
     const responseData = {
@@ -500,6 +271,8 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
           : null,
         groups,
         unmatchedProducts: unmatched,
+        filteredAsAccessories: filteredAsAccessories.length,
+        matchingStats: matchStats,
         platforms: platformResults,
         allProducts: plainProducts,
         vendors: vendorSummaries,
