@@ -16,6 +16,7 @@ const fastify = Fastify({
   },
   requestIdHeader: 'x-request-id',
   genReqId: () => crypto.randomUUID(),
+  maxParamLength: 600, // Support long product slugs (default 100 is too short)
 });
 
 fastify.setErrorHandler(errorHandler);
