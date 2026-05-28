@@ -8,6 +8,170 @@ import { apiKeyAuth } from '@/api/middleware/auth';
 
 const service = new ProductService();
 
+/* ─── Product Matching Helpers ───────────────────────────── */
+
+/** Normalize a product title for fuzzy matching */
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[''""]/g, '')                     // smart quotes
+    .replace(/\s*[-–—/|,]\s*/g, ' ')            // separators
+    .replace(/\b(brand new|uk used|fairly used|used|refurbished|original)\b/gi, '')
+    .replace(/\b(free delivery|free shipping|fast shipping)\b/gi, '')
+    .replace(/\b(lagos|abuja|nigeria|naija)\b/gi, '')
+    .replace(/\b\d+\s*%\s*off\b/gi, '')         // "30% off"
+    .replace(/[^a-z0-9\s.]/g, ' ')              // non-alpha
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Extract key product signature: brand + model + storage/size */
+function extractSignature(normalized: string): string {
+  // Try to extract: brand + model number + capacity
+  // e.g. "samsung galaxy a15 128gb" → "samsung galaxy a15 128gb"
+  // e.g. "apple iphone 15 pro max 256gb" → "iphone 15 pro max 256gb"
+  const storage = normalized.match(/(\d+\s*(?:gb|tb))/i)?.[0]?.replace(/\s/g, '') || '';
+  const ram = normalized.match(/(\d+\s*gb\s*ram)/i)?.[0]?.replace(/\s/g, '') || '';
+
+  // Remove noise words
+  const cleaned = normalized
+    .replace(/\b(for|with|and|the|in|on|to|of|a|an)\b/g, '')
+    .replace(/\b(case|cover|screen protector|charger|cable|earphone|headphone|tempered glass|pouch|bag)\b/g, (m) => `[acc:${m}]`)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned;
+}
+
+/** Calculate similarity between two strings (Jaccard on word bigrams) */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+
+  const bigramsOf = (s: string) => {
+    const words = s.split(' ').filter(w => w.length > 0);
+    const bg = new Set<string>();
+    for (let i = 0; i < words.length - 1; i++) {
+      bg.add(words[i] + ' ' + words[i + 1]);
+    }
+    // Also add individual words for short titles
+    words.forEach(w => bg.add(w));
+    return bg;
+  };
+
+  const setA = bigramsOf(a);
+  const setB = bigramsOf(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+
+  let intersection = 0;
+  for (const bg of setA) {
+    if (setB.has(bg)) intersection++;
+  }
+
+  return intersection / (setA.size + setB.size - intersection);
+}
+
+interface ProductGroup {
+  groupId: string;
+  name: string;                  // best representative title
+  listings: {
+    platform: string;
+    product: ScrapedProduct;
+    vendorName?: string;
+    trustLevel?: string;
+  }[];
+  lowestPrice: number;
+  highestPrice: number;
+  cheapestPlatform: string;
+  savings: number;
+  platformCount: number;
+}
+
+/** Group similar products across platforms */
+function groupProducts(allProducts: ScrapedProduct[]): { groups: ProductGroup[]; unmatched: ScrapedProduct[] } {
+  const THRESHOLD = 0.35; // Similarity threshold for grouping
+
+  // Pre-compute normalized titles and signatures
+  const items = allProducts.map((p, idx) => ({
+    product: p,
+    idx,
+    normalized: normalizeTitle(p.title),
+    signature: extractSignature(normalizeTitle(p.title)),
+    grouped: false,
+  }));
+
+  const groups: ProductGroup[] = [];
+
+  // Greedy clustering: for each unmatched product, find all similar ones
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].grouped) continue;
+
+    const anchor = items[i];
+    anchor.grouped = true;
+
+    const cluster: typeof items = [anchor];
+
+    // Find matches from OTHER platforms
+    for (let j = i + 1; j < items.length; j++) {
+      if (items[j].grouped) continue;
+      // Only match across different platforms for cross-platform comparison
+      if (items[j].product.platform === anchor.product.platform) continue;
+
+      const sim = similarity(anchor.signature, items[j].signature);
+      if (sim >= THRESHOLD) {
+        items[j].grouped = true;
+        cluster.push(items[j]);
+      }
+    }
+
+    // Only create a group if we have listings from 2+ platforms
+    if (cluster.length >= 2) {
+      const listings = cluster.map(c => ({
+        platform: c.product.platform,
+        product: c.product,
+        vendorName: c.product.vendor?.name,
+        trustLevel: c.product.vendor?.rating
+          ? (c.product.vendor.rating >= 4 ? 'trusted' : c.product.vendor.rating >= 3 ? 'average' : 'caution')
+          : (c.product.vendor?.isVerified ? 'verified' : 'unknown'),
+      }));
+
+      // Sort listings by price
+      listings.sort((a, b) => a.product.price - b.product.price);
+
+      const prices = listings.map(l => l.product.price);
+      const lowestPrice = Math.min(...prices);
+      const highestPrice = Math.max(...prices);
+
+      // Use the title from the cheapest listing (or the longest title for clarity)
+      const bestTitle = listings.reduce((best, l) =>
+        l.product.title.length > best.length ? l.product.title : best
+      , listings[0].product.title);
+
+      groups.push({
+        groupId: `grp-${groups.length + 1}`,
+        name: bestTitle,
+        listings,
+        lowestPrice,
+        highestPrice,
+        cheapestPlatform: listings[0].platform,
+        savings: highestPrice - lowestPrice,
+        platformCount: new Set(listings.map(l => l.platform)).size,
+      });
+    } else {
+      // Ungroup — mark as not grouped so it goes to unmatched
+      anchor.grouped = false;
+    }
+  }
+
+  // Sort groups by savings descending (biggest savings first)
+  groups.sort((a, b) => b.savings - a.savings);
+
+  // Collect unmatched
+  const unmatched = items.filter(i => !i.grouped).map(i => i.product);
+
+  return { groups, unmatched };
+}
+
 export async function productRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /products — list all products (paginated)
   fastify.get('/', async (request, reply) => {
@@ -126,6 +290,10 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
           : (p.vendor!.isVerified ? 'verified' : 'unknown'),
       }));
 
+    // Group similar products across platforms for side-by-side comparison
+    const plainProducts = allProducts.map(({ _sortPrice, ...p }) => p);
+    const { groups, unmatched } = groupProducts(plainProducts);
+
     const elapsed = Date.now() - startTime;
 
     return reply.send({
@@ -152,8 +320,12 @@ export async function productRoutes(fastify: FastifyInstance): Promise<void> {
               reason: `Lowest price found on ${cheapestPlatform} — ₦${cheapestProduct.price.toLocaleString()}`,
             }
           : null,
+        // NEW: Grouped cross-platform comparison
+        groups,
+        unmatchedProducts: unmatched,
+        // Legacy flat list (kept for backwards compat)
         platforms: platformResults,
-        allProducts: allProducts.map(({ _sortPrice, ...p }) => p),
+        allProducts: plainProducts,
         vendors: vendorSummaries,
       },
       timestamp: new Date().toISOString(),
