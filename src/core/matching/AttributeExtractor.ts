@@ -86,6 +86,17 @@ const BRAND_MAP: Record<string, string> = {
   msi: 'MSI',
   jbl: 'JBL',
   bose: 'Bose',
+  harman: 'Harman Kardon', 'harman kardon': 'Harman Kardon',
+  marshall: 'Marshall',
+  zealot: 'Zealot',
+  'ultimate ears': 'Ultimate Ears', ue: 'Ultimate Ears',
+  sonos: 'Sonos',
+  skullcandy: 'Skullcandy',
+  beats: 'Beats', 'beats by dre': 'Beats',
+  sennheiser: 'Sennheiser',
+  edifier: 'Edifier',
+  tronsmart: 'Tronsmart',
+  tribit: 'Tribit',
   oraimo: 'Oraimo',
   anker: 'Anker',
   hisense: 'Hisense',
@@ -226,6 +237,9 @@ const CATEGORY_RULES: CategoryRule[] = [
     category: 'AUDIO',
     patterns: [
       /\b(airpods|galaxy\s*buds|freepods|freebuds|earbuds|bluetooth\s*(speaker|headphone|earphone)|soundbar|home\s*theater|soundcore|jbl\s*(flip|charge|go|xtreme|tune|live)|bose\s*(qc|quietcomfort|soundlink))\b/i,
+      /\b(wireless\s*speaker|portable\s*speaker|bluetooth\s*speaker|speaker\s*(?:s\d|[a-z]\d{1,3}\b))/i,
+      /\b(zealot|tronsmart|tribit|edifier|marshall|sonos|harman\s*kardon)\s+\w/i,
+      /\b(headphones?|headset|over[\s-]?ear|on[\s-]?ear|in[\s-]?ear|tws|true\s*wireless|neckband)\b/i,
     ],
   },
   {
@@ -381,6 +395,18 @@ const MODEL_PATTERNS: { brand: string; pattern: RegExp; modelGroup: number }[] =
   { brand: 'Kingston', pattern: /\b(kingston\s*(?:a\d{3,4}|nv\d|fury|kc\d{3,4}|datatraveler))/i, modelGroup: 1 },
   // Crucial storage
   { brand: 'Crucial', pattern: /\b(crucial\s*(?:mx\d{3}|bx\d{3}|p\d|t\d{3}|x\d))/i, modelGroup: 1 },
+  // Audio — Zealot speakers (S32, S32 Pro, S67, etc.)
+  { brand: 'Zealot', pattern: /\bzealot\s*(?:speaker\s*)?([a-z]\d{1,3}(?:\s*pro)?)\b/i, modelGroup: 1 },
+  // Audio — JBL extended (Flip 6, Charge 5, Go 3, Xtreme 3, PartyBox, Tune 760, etc.)
+  { brand: 'JBL', pattern: /\bjbl\s*((?:flip|charge|go|xtreme|pulse|boombox|partybox|clip|endurance|tune|live|wave|vibe)\s*\d*(?:\s*(?:pro|plus|neo|nc|buds))?)/i, modelGroup: 1 },
+  // Audio — Bose
+  { brand: 'Bose', pattern: /\bbose\s*((?:soundlink|quietcomfort|qc|revolve|sport|ultra\s*open)\s*\d*(?:\s*(?:ii|iii|plus|se|micro|flex|mini))?)/i, modelGroup: 1 },
+  // Audio — Oraimo (FreePods, SpaceBuds, Necklace, etc.)
+  { brand: 'Oraimo', pattern: /\boraimo\s*(?:oeb[\s-]?\d+\s*)?(?:anc\s*)?(freepods|spacebuds|necklace|spacebox)\s*(\d+)?(?:\s*(?:pro|lite|s|plus))?/i, modelGroup: 0 },
+  // Audio — Tronsmart
+  { brand: 'Tronsmart', pattern: /\btronsmart\s*((?:mega|element|bang|halo|trip|t\d)\s*(?:pro|se|plus|max)?)/i, modelGroup: 1 },
+  // Audio — Marshall
+  { brand: 'Marshall', pattern: /\bmarshall\s*((?:stanmore|acton|emberton|willen|middleton|stockwell|kilburn|motif|minor|major|mode|monitor)\s*(?:ii|iii|iv)?)/i, modelGroup: 1 },
 ];
 
 // ─── Main extraction function ───────────────────────────
