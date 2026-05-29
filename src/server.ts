@@ -4,8 +4,11 @@ import { setupPlugins } from '@/api/plugins';
 import { registerRoutes } from '@/api/routes';
 import { errorHandler } from '@/api/middleware/errorHandler';
 import { connectDatabase, disconnectDatabase } from '@/infrastructure/database/prisma';
-import { connectRedis, disconnectRedis } from '@/infrastructure/cache/redis';
+import { connectRedis, disconnectRedis, isRedisAvailable } from '@/infrastructure/cache/redis';
 import { closeAllQueues } from '@/infrastructure/queue/bullmq';
+import { SchedulerService } from '@/core/services/SchedulerService';
+
+const scheduler = new SchedulerService();
 
 const fastify = Fastify({
   logger: {
@@ -49,6 +52,14 @@ async function start(): Promise<void> {
     await fastify.listen({ port: serverConfig.port, host: '0.0.0.0' });
     fastify.log.info(`Server running on port ${serverConfig.port}`);
 
+    // Start built-in scheduler if Redis/BullMQ workers aren't available
+    if (!isRedisAvailable()) {
+      fastify.log.info('Redis unavailable — starting built-in scheduler for scraping & analysis');
+      scheduler.start();
+    } else {
+      fastify.log.info('Redis available — use BullMQ workers for scheduled jobs (npx tsx src/workers/index.ts)');
+    }
+
     if (serverConfig.nodeEnv === 'development') {
       fastify.log.info(`Swagger docs at http://localhost:${serverConfig.port}/docs`);
     }
@@ -60,6 +71,7 @@ async function start(): Promise<void> {
 
 async function shutdown(): Promise<void> {
   fastify.log.info('Shutting down...');
+  scheduler.stop();
   await fastify.close();
   await closeAllQueues();
   await disconnectRedis();

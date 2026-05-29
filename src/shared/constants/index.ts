@@ -14,12 +14,18 @@ export const HTTP_STATUS = {
 } as const;
 
 export const NIGERIAN_CONDITION_KEYWORDS: Record<string, string[]> = {
-  NEW: ['brand new', 'sealed', 'bnew', 'new in box', 'factory sealed', 'unopened'],
-  UK_USED: ['uk used', 'tokunbo', 'london used', 'foreign used', 'ex-uk', 'grade a used', 'us used', 'canada used', 'european used'],
-  FAIRLY_USED: ['fairly used', 'nigerian used', 'naija used', 'locally used', 'clean used', 'neat used', 'working perfectly'],
-  REFURBISHED: ['refurbished', 'refurb', 'first copy', 'grade a copy', 'renewed', 'reconditioned'],
+  NEW: ['brand new', 'sealed', 'bnew', 'new in box', 'factory sealed', 'unopened', 'new arrival', 'latest', 'original new'],
+  UK_USED: ['uk used', 'tokunbo', 'london used', 'foreign used', 'ex-uk', 'grade a used', 'us used', 'canada used', 'european used', 'grade a', 'grade b'],
+  FAIRLY_USED: ['fairly used', 'nigerian used', 'naija used', 'locally used', 'clean used', 'neat used', 'working perfectly', 'pre-owned', 'pre owned', 'used'],
+  REFURBISHED: ['refurbished', 'refurb', 'first copy', 'grade a copy', 'renewed', 'reconditioned', 'certified pre-owned'],
   OPEN_BOX: ['open box', 'demo unit', 'display unit', 'unboxed'],
 };
+
+/**
+ * Platforms where listings without condition keywords should default to NEW
+ * (official marketplace retailers typically sell new items).
+ */
+export const PLATFORMS_DEFAULT_NEW = ['JUMIA', 'KONGA'];
 
 export const PLATFORM_BASE_URLS = {
   JUMIA: 'https://www.jumia.com.ng',

@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { IngestionService } from '@/core/services/IngestionService';
+import { SchedulerService } from '@/core/services/SchedulerService';
 import { addScrapingJob, getQueue } from '@/infrastructure/queue/bullmq';
 import { healthCheckDatabase } from '@/infrastructure/database/prisma';
 import { healthCheckRedis, getRedis, isRedisAvailable } from '@/infrastructure/cache/redis';
@@ -11,6 +12,7 @@ import { prisma } from '@/infrastructure/database/prisma';
 
 const ingestion = new IngestionService();
 const sentiment = new SentimentService();
+const scheduler = new SchedulerService();
 
 export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
 
@@ -321,6 +323,39 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
 
     await redis.flushdb();
     return reply.send(successResponse({ message: 'Cache flushed' }));
+  });
+
+  // ─── Run Full Scrape Cycle Now ──────────────────────
+  // Triggers the built-in scheduler's full cycle (scrape + sentiment + trust)
+  fastify.post('/scheduler/run', { config: { requestTimeout: 600_000 } } as any, async (request, reply) => {
+    reply.send(successResponse({ message: 'Scrape cycle started in background' }));
+    // Fire-and-forget — don't block the response
+    setImmediate(() => scheduler.runCycle());
+  });
+
+  // ─── Run Sentiment Reanalysis + Trust Recompute ────
+  fastify.post('/scheduler/analyze', async (request, reply) => {
+    const reviewCount = await scheduler.analyzeUnanalyzedReviews();
+    return reply.send(successResponse({
+      message: `Analyzed ${reviewCount} reviews`,
+      reviewsProcessed: reviewCount,
+    }));
+  });
+
+  // ─── Fix UNKNOWN conditions for retail platforms ─────
+  fastify.post('/fix/conditions', async (request, reply) => {
+    // Update listings on Jumia/Konga that are UNKNOWN to NEW
+    const result = await prisma.productListing.updateMany({
+      where: {
+        condition: 'UNKNOWN',
+        platform: { in: ['JUMIA', 'KONGA'] },
+      },
+      data: { condition: 'NEW' },
+    });
+    return reply.send(successResponse({
+      message: `Updated ${result.count} listings from UNKNOWN to NEW on retail platforms`,
+      updated: result.count,
+    }));
   });
 
   // ─── Scraper Health Check ────────────────────────────

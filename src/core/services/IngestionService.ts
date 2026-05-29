@@ -85,7 +85,7 @@ export class IngestionService {
       vendorId = vendor.id;
     }
 
-    const condition = (classifyCondition(scraped.title) || 'UNKNOWN') as ProductCondition;
+    const condition = (classifyCondition(scraped.title, platform) || 'UNKNOWN') as ProductCondition;
 
     await prisma.productListing.upsert({
       where: { platform_externalId: { platform, externalId: scraped.externalId } },

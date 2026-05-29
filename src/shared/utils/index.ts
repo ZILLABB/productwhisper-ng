@@ -1,4 +1,4 @@
-import { NIGERIAN_CONDITION_KEYWORDS, SCRAPER_USER_AGENTS } from '@/shared/constants';
+import { NIGERIAN_CONDITION_KEYWORDS, PLATFORMS_DEFAULT_NEW, SCRAPER_USER_AGENTS } from '@/shared/constants';
 import type { ApiResponse, PaginatedResponse } from '@/shared/types';
 
 // ─── Response Helpers ───────────────────────────────────
@@ -31,10 +31,19 @@ export function paginatedResponse<T>(data: T[], page: number, limit: number, tot
 
 // ─── Nigerian Product Helpers ───────────────────────────
 
-export function classifyCondition(text: string): string {
+export function classifyCondition(text: string, platform?: string): string {
   const lower = text.toLowerCase();
-  for (const [condition, keywords] of Object.entries(NIGERIAN_CONDITION_KEYWORDS)) {
-    if (keywords.some(kw => lower.includes(kw))) return condition;
+  // Check explicit condition keywords first (most specific wins)
+  // Check USED conditions before NEW to avoid false positives
+  // (e.g. "uk used" should not match "new" first)
+  const orderedConditions = ['UK_USED', 'FAIRLY_USED', 'REFURBISHED', 'OPEN_BOX', 'NEW'];
+  for (const condition of orderedConditions) {
+    const keywords = NIGERIAN_CONDITION_KEYWORDS[condition];
+    if (keywords && keywords.some(kw => lower.includes(kw))) return condition;
+  }
+  // If no keyword matched, default to NEW for official retail platforms
+  if (platform && PLATFORMS_DEFAULT_NEW.includes(platform.toUpperCase())) {
+    return 'NEW';
   }
   return 'UNKNOWN';
 }

@@ -39,7 +39,15 @@ export class ProductService {
     };
 
     if (filters.category) where.category = { contains: filters.category, mode: 'insensitive' };
-    if (filters.brand) where.brand = { contains: filters.brand, mode: 'insensitive' };
+    if (filters.brand) {
+      // Support comma-separated multi-brand filter
+      const brands = filters.brand.split(',').map(b => b.trim()).filter(Boolean);
+      if (brands.length === 1) {
+        where.brand = { contains: brands[0], mode: 'insensitive' };
+      } else if (brands.length > 1) {
+        where.brand = { in: brands, mode: 'insensitive' };
+      }
+    }
 
     const listingWhere: Record<string, unknown> = {};
     if (filters.minPrice || filters.maxPrice) {
