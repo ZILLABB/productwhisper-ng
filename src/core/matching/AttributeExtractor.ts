@@ -7,6 +7,17 @@
  * This is deterministic, fast, free, and testable — no AI/LLM needed.
  */
 
+export interface ProductSpecs {
+  watts?: string;        // e.g. "500W", "3000W" — solar panels, generators, microwaves
+  litres?: string;       // e.g. "20L", "200L" — microwaves, fridges, water tanks
+  kwh?: string;          // e.g. "1kWh", "5kWh" — batteries, inverters
+  ah?: string;           // e.g. "100Ah", "200Ah" — batteries
+  btu?: string;          // e.g. "12000BTU" — air conditioners
+  screenSize?: string;   // e.g. "55\"", "6.7\"" — TVs, phones
+  weight?: string;       // e.g. "5kg", "20kg"
+  voltage?: string;      // e.g. "12V", "24V", "48V"
+}
+
 export interface ProductAttributes {
   brand: string | null;
   model: string | null;
@@ -18,6 +29,7 @@ export interface ProductAttributes {
   isAccessory: boolean;
   generation: string | null;     // e.g. "13", "15 Pro Max", "Series 9"
   variant: string | null;        // e.g. "Digital Edition", "Ultra", "Pro"
+  specs: ProductSpecs;           // physical specs (watts, litres, kWh, etc.)
   confidence: number;            // 0–100 — how confident we are in the extraction
   normalizedSignature: string;   // canonical form for matching
 }
@@ -33,6 +45,9 @@ export type ProductCategory =
   | 'WEARABLE'
   | 'CAMERA'
   | 'APPLIANCE'
+  | 'SOLAR_POWER'
+  | 'GENERATOR'
+  | 'AIR_CONDITIONER'
   | 'PHONE_ACCESSORY'
   | 'LAPTOP_ACCESSORY'
   | 'GAMING_ACCESSORY'
@@ -75,6 +90,19 @@ const BRAND_MAP: Record<string, string> = {
   binatone: 'Binatone',
   tcl: 'TCL',
   'nothing': 'Nothing',
+  // Appliance / power brands
+  'thermocool': 'Thermocool', 'haier thermocool': 'Haier Thermocool',
+  'scanfrost': 'Scanfrost', 'nexus': 'Nexus', 'polystar': 'Polystar',
+  'midea': 'Midea', 'maxi': 'Maxi', 'panasonic': 'Panasonic',
+  'sharp': 'Sharp', 'kenwood': 'Kenwood', 'philips': 'Philips',
+  'bruhm': 'Bruhm', 'qasa': 'Qasa', 'century': 'Century',
+  'tiger': 'Tiger', 'firman': 'Firman', 'sumec': 'Sumec',
+  'elepaq': 'Elepaq', 'lutian': 'Lutian', 'honda': 'Honda',
+  'yamaha': 'Yamaha', 'kemage': 'Kemage', 'senwei': 'Senwei',
+  'luminous': 'Luminous', 'felicity': 'Felicity', 'must': 'Must',
+  'bluegate': 'Bluegate', 'sukam': 'Sukam', 'genus': 'Genus',
+  'mercury': 'Mercury', 'microtek': 'Microtek', 'power tank': 'Itel',
+  'rubitec': 'Rubitec', 'kartel': 'Kartel',
 };
 
 // ─── Accessory keywords ─────────────────────────────────
@@ -187,7 +215,79 @@ const CATEGORY_RULES: CategoryRule[] = [
       /\b(apple\s*watch|galaxy\s*watch|fitbit|amazfit|mi\s*band|smart\s*watch|smartwatch|smart\s*band)\b/i,
     ],
   },
+  {
+    category: 'SOLAR_POWER',
+    patterns: [
+      /\b(solar\s*(?:panel|generator|inverter|battery|system|kit|power\s*station|charge\s*controller|mppt|lithium\s*battery))\b/i,
+      /\b(inverter\s*(?:battery|system)|power\s*station|lifepo4|lithium\s*(?:iron|battery)|ups\s*(?:battery|inverter))\b/i,
+      /\b(pwm\s*controller|charge\s*controller|solar\s*light)\b/i,
+    ],
+  },
+  {
+    category: 'GENERATOR',
+    patterns: [
+      /\b(generator|gen\s*set|genset|petrol\s*generator|diesel\s*generator|silent\s*generator|portable\s*generator)\b/i,
+      /\b(firman|sumec|elepaq|lutian|kemage|tiger\s*generator)\b/i,
+    ],
+  },
+  {
+    category: 'AIR_CONDITIONER',
+    patterns: [
+      /\b(air\s*condition(?:er|ing)?|split\s*(?:unit|ac)|window\s*ac|standing\s*ac|portable\s*ac|inverter\s*ac)\b/i,
+      /\b(\d+\.?\d*\s*(?:hp|ton)\s*(?:split|ac|air))\b/i,
+      /\b(\d{4,5}\s*btu)\b/i,
+    ],
+  },
+  {
+    category: 'APPLIANCE',
+    patterns: [
+      /\b(microwave|blender|washing\s*machine|refrigerator|freezer|fridge|gas\s*cooker|electric\s*cooker|oven|toaster|iron(?:ing)?\s*(?:box|press)?|fan|standing\s*fan|ceiling\s*fan|water\s*heater|water\s*dispenser|rice\s*cooker|pressure\s*cooker|food\s*processor|juicer|kettle|vacuum\s*cleaner|dish\s*washer)\b/i,
+      /\b(stabilizer|voltage\s*regulator|surge\s*protector|power\s*strip|extension\s*box)\b/i,
+    ],
+  },
 ];
+
+// ─── Physical spec extraction ───────────────────────────
+
+const SPEC_PATTERNS: { key: keyof ProductSpecs; pattern: RegExp; group: number; suffix: string }[] = [
+  // Watts — "500W", "3000 watts", "500watts"
+  { key: 'watts', pattern: /\b(\d{2,5})\s*(?:w(?:att)?s?)\b/i, group: 1, suffix: 'W' },
+  // Litres — "20L", "200 litres", "20 liters", "32ltr"
+  { key: 'litres', pattern: /\b(\d{1,4})\s*(?:l(?:itres?|iters?|tr?s?)?)\b/i, group: 1, suffix: 'L' },
+  // kWh — "1kWh", "5 kwh", "1.5kwh"
+  { key: 'kwh', pattern: /\b(\d+\.?\d*)\s*kwh\b/i, group: 1, suffix: 'kWh' },
+  // Ah — "100Ah", "200 ah"
+  { key: 'ah', pattern: /\b(\d{2,4})\s*ah\b/i, group: 1, suffix: 'Ah' },
+  // BTU — "12000BTU", "18000 btu"
+  { key: 'btu', pattern: /\b(\d{4,6})\s*btu\b/i, group: 1, suffix: 'BTU' },
+  // Screen size — "55 inch", '6.7"', "65 inches"
+  { key: 'screenSize', pattern: /\b(\d{1,3}(?:\.\d)?)\s*(?:inch(?:es)?|")\b/i, group: 1, suffix: '"' },
+  // Weight — "5kg", "20 kg"
+  { key: 'weight', pattern: /\b(\d{1,4}(?:\.\d)?)\s*kg\b/i, group: 1, suffix: 'kg' },
+  // Voltage — "12V", "24V", "48V"
+  { key: 'voltage', pattern: /\b(\d{1,3})\s*v(?:olt)?s?\b/i, group: 1, suffix: 'V' },
+  // HP (horsepower) — for ACs: "1.5hp", "2 hp"
+  // stored in watts as a normalized value (1hp ≈ 745W for display)
+];
+
+function extractSpecs(lower: string, category: ProductCategory): ProductSpecs {
+  const specs: ProductSpecs = {};
+
+  for (const { key, pattern, group, suffix } of SPEC_PATTERNS) {
+    const match = lower.match(pattern);
+    if (match) {
+      specs[key] = `${match[group]}${suffix}`;
+    }
+  }
+
+  // HP for ACs — convert to watts equivalent for display
+  const hpMatch = lower.match(/\b(\d+\.?\d*)\s*(?:hp|horse\s*power)\b/i);
+  if (hpMatch && (category === 'AIR_CONDITIONER' || /ac|air\s*condition/i.test(lower))) {
+    specs.watts = `${hpMatch[1]}HP`;
+  }
+
+  return specs;
+}
 
 // ─── Storage extraction ─────────────────────────────────
 
@@ -271,11 +371,15 @@ export function extractAttributes(title: string): ProductAttributes {
   // 9. Extract variant/generation info
   const variant = extractVariant(lower, model);
 
+  // 10. Extract physical specs (watts, litres, kWh, etc.)
+  const specs = extractSpecs(lower, category);
+  if (Object.keys(specs).length > 0) confidence += 10;
+
   // Cap confidence at 100
   confidence = Math.min(100, confidence);
 
   // Build normalized signature for matching
-  const normalizedSignature = buildSignature(brand, model, storage, category);
+  const normalizedSignature = buildSignature(brand, model, storage, category, specs);
 
   return {
     brand,
@@ -288,6 +392,7 @@ export function extractAttributes(title: string): ProductAttributes {
     isAccessory,
     generation: null, // derived from model
     variant,
+    specs,
     confidence,
     normalizedSignature,
   };
@@ -453,12 +558,20 @@ function extractVariant(lower: string, model: string | null): string | null {
   return null;
 }
 
-function buildSignature(brand: string | null, model: string | null, storage: string | null, category: ProductCategory): string {
+function buildSignature(brand: string | null, model: string | null, storage: string | null, category: ProductCategory, specs?: ProductSpecs): string {
   const parts: string[] = [];
   if (brand) parts.push(brand.toLowerCase());
   if (model) parts.push(model.toLowerCase());
   if (storage) parts.push(storage.toLowerCase());
-  // Category is implicit — matching will gate on it
+  // Include key specs in signature for non-electronics (appliances, solar, etc.)
+  if (specs) {
+    if (specs.watts) parts.push(specs.watts.toLowerCase());
+    if (specs.litres) parts.push(specs.litres.toLowerCase());
+    if (specs.kwh) parts.push(specs.kwh.toLowerCase());
+    if (specs.ah) parts.push(specs.ah.toLowerCase());
+    if (specs.btu) parts.push(specs.btu.toLowerCase());
+    if (specs.screenSize && ['TV', 'APPLIANCE'].includes(category)) parts.push(specs.screenSize.toLowerCase());
+  }
   return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -586,6 +699,42 @@ export function validateMatch(a: ProductAttributes, b: ProductAttributes): Match
     // Different colors: no penalty at all
   }
 
+  // Gate 6: Physical specs must match (watts, litres, kWh, etc.)
+  // A 20L microwave is NOT the same product as a 32L microwave
+  const specKeys: (keyof ProductSpecs)[] = ['watts', 'litres', 'kwh', 'ah', 'btu'];
+  for (const key of specKeys) {
+    const aVal = a.specs?.[key];
+    const bVal = b.specs?.[key];
+    if (aVal && bVal && aVal.toLowerCase() !== bVal.toLowerCase()) {
+      return {
+        isMatch: false,
+        confidence: 0,
+        matchedAttributes: matched,
+        mismatchedAttributes: [key],
+        explanation: `Spec mismatch (${key}): ${aVal} vs ${bVal}`,
+      };
+    }
+    if (aVal && bVal && aVal.toLowerCase() === bVal.toLowerCase()) {
+      matched.push(key);
+      score += 10;
+    }
+  }
+
+  // Screen size gate — only for TVs (phone screen sizes vary by listing title)
+  if (['TV', 'APPLIANCE'].includes(a.category)) {
+    const aScreen = a.specs?.screenSize;
+    const bScreen = b.specs?.screenSize;
+    if (aScreen && bScreen && aScreen !== bScreen) {
+      return {
+        isMatch: false,
+        confidence: 0,
+        matchedAttributes: matched,
+        mismatchedAttributes: ['screenSize'],
+        explanation: `Screen size mismatch: ${aScreen} vs ${bScreen}`,
+      };
+    }
+  }
+
   // Variant match for consoles
   if (a.variant && b.variant) {
     if (a.variant.toLowerCase() !== b.variant.toLowerCase()) {
@@ -659,6 +808,10 @@ export function isPriceSuspiciousForCategory(price: number, category: ProductCat
     TV: 30000,
     GAMING_CONSOLE: 80000,
     WEARABLE: 10000,
+    SOLAR_POWER: 5000,
+    GENERATOR: 30000,
+    AIR_CONDITIONER: 50000,
+    APPLIANCE: 3000,
   };
 
   const minPrice = MIN_PRICES[category];
