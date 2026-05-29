@@ -44,6 +44,9 @@ export type ProductCategory =
   | 'AUDIO'
   | 'WEARABLE'
   | 'CAMERA'
+  | 'STORAGE_DEVICE'
+  | 'NETWORKING'
+  | 'PRINTER'
   | 'APPLIANCE'
   | 'SOLAR_POWER'
   | 'GENERATOR'
@@ -103,6 +106,22 @@ const BRAND_MAP: Record<string, string> = {
   'bluegate': 'Bluegate', 'sukam': 'Sukam', 'genus': 'Genus',
   'mercury': 'Mercury', 'microtek': 'Microtek', 'power tank': 'Itel',
   'rubitec': 'Rubitec', 'kartel': 'Kartel',
+  // Storage device brands
+  'western digital': 'Western Digital', 'wd': 'Western Digital',
+  'seagate': 'Seagate', 'toshiba': 'Toshiba',
+  'kingston': 'Kingston', 'crucial': 'Crucial', 'sandisk': 'SanDisk',
+  'transcend': 'Transcend', 'patriot': 'Patriot', 'pny': 'PNY',
+  'intel': 'Intel', 'corsair': 'Corsair', 'addlink': 'Addlink',
+  'hikvision': 'Hikvision', 'lexar': 'Lexar', 'teamgroup': 'TeamGroup',
+  'team': 'TeamGroup', 'silicon power': 'Silicon Power', 'orico': 'Orico',
+  // Networking brands
+  'tp-link': 'TP-Link', 'tplink': 'TP-Link', 'tp link': 'TP-Link',
+  'netgear': 'Netgear', 'cisco': 'Cisco', 'linksys': 'Linksys',
+  'mikrotik': 'MikroTik', 'ubiquiti': 'Ubiquiti', 'dlink': 'D-Link', 'd-link': 'D-Link',
+  'tenda': 'Tenda', 'mercusys': 'Mercusys', 'zyxel': 'Zyxel',
+  // Printer brands
+  'epson': 'Epson', 'canon': 'Canon', 'brother': 'Brother',
+  'ricoh': 'Ricoh', 'xerox': 'Xerox', 'kyocera': 'Kyocera', 'konica': 'Konica Minolta',
 };
 
 // ─── Accessory keywords ─────────────────────────────────
@@ -239,6 +258,28 @@ const CATEGORY_RULES: CategoryRule[] = [
     ],
   },
   {
+    category: 'STORAGE_DEVICE',
+    patterns: [
+      /\b(ssd|solid\s*state\s*drive|hdd|hard\s*(?:disk|drive)|nvme|m\.?2\s*(?:ssd|drive)?|sata\s*(?:ssd|drive|iii?)?|internal\s*(?:ssd|hard|drive)|external\s*(?:hard|drive|hdd|ssd))\b/i,
+      /\b(wd\s*(?:blue|black|red|green|purple|gold|ultrastar)|barracuda|ironwolf|firecuda|skyhawk)\b/i,
+      /\b(kingston\s*a\d{3,4}|crucial\s*(?:mx|bx|p\d)|samsung\s*(?:evo|pro|qvo)\s*\d{3})\b/i,
+      /\b(portable\s*(?:ssd|hard\s*drive|hdd)|usb\s*(?:hard|drive|hdd))\b/i,
+    ],
+  },
+  {
+    category: 'NETWORKING',
+    patterns: [
+      /\b(router|wifi\s*router|wireless\s*router|modem|access\s*point|range\s*extender|wifi\s*extender|mesh\s*(?:router|system|wifi)|network\s*switch|ethernet\s*switch|poe\s*switch)\b/i,
+      /\b(tp[\s-]?link|netgear|mikrotik|ubiquiti)\s+\w/i,
+    ],
+  },
+  {
+    category: 'PRINTER',
+    patterns: [
+      /\b(printer|inkjet|laserjet|laser\s*printer|all[\s-]?in[\s-]?one\s*printer|ink\s*tank|photocopier|copier|scanner\s*printer)\b/i,
+    ],
+  },
+  {
     category: 'APPLIANCE',
     patterns: [
       /\b(microwave|blender|washing\s*machine|refrigerator|freezer|fridge|gas\s*cooker|electric\s*cooker|oven|toaster|iron(?:ing)?\s*(?:box|press)?|fan|standing\s*fan|ceiling\s*fan|water\s*heater|water\s*dispenser|rice\s*cooker|pressure\s*cooker|food\s*processor|juicer|kettle|vacuum\s*cleaner|dish\s*washer)\b/i,
@@ -328,6 +369,18 @@ const MODEL_PATTERNS: { brand: string; pattern: RegExp; modelGroup: number }[] =
   // Generic laptop patterns
   { brand: '', pattern: /\b(thinkpad\s*[a-z]\d+(?:\s*gen\s*\d+)?)/i, modelGroup: 1 },
   { brand: '', pattern: /\b(ideapad\s*(?:slim|flex)?\s*\d+)/i, modelGroup: 1 },
+  // Western Digital storage — "WD Blue", "Western Digital WD Blue 3D NAND"
+  { brand: 'Western Digital', pattern: /\b(?:wd|western\s*digital)\s*(?:wd\s*)?(blue|black|red|green|purple|gold|ultrastar)(?:\s*(?:3d\s*nand|sa\d{3}|sn\d{3,4}|plus))?/i, modelGroup: 0 },
+  { brand: 'Western Digital', pattern: /\b(my\s*(?:passport|book|cloud)\s*(?:ultra|ssd|go|duo|essential)?)/i, modelGroup: 1 },
+  // Seagate storage
+  { brand: 'Seagate', pattern: /\b(barracuda|ironwolf|firecuda|skyhawk|exos|one\s*touch|expansion|backup\s*plus)(?:\s*(?:pro|compute|nas|vn\d+))?/i, modelGroup: 0 },
+  // Samsung storage
+  { brand: 'Samsung', pattern: /\b(samsung\s*(?:\d{3}\s*)?(?:evo|pro|qvo)\s*(?:plus)?\s*\d{0,4})/i, modelGroup: 1 },
+  { brand: 'Samsung', pattern: /\b(samsung\s*t\d)\b/i, modelGroup: 1 },
+  // Kingston storage
+  { brand: 'Kingston', pattern: /\b(kingston\s*(?:a\d{3,4}|nv\d|fury|kc\d{3,4}|datatraveler))/i, modelGroup: 1 },
+  // Crucial storage
+  { brand: 'Crucial', pattern: /\b(crucial\s*(?:mx\d{3}|bx\d{3}|p\d|t\d{3}|x\d))/i, modelGroup: 1 },
 ];
 
 // ─── Main extraction function ───────────────────────────
@@ -812,6 +865,9 @@ export function isPriceSuspiciousForCategory(price: number, category: ProductCat
     GENERATOR: 30000,
     AIR_CONDITIONER: 50000,
     APPLIANCE: 3000,
+    STORAGE_DEVICE: 3000,
+    NETWORKING: 5000,
+    PRINTER: 15000,
   };
 
   const minPrice = MIN_PRICES[category];
