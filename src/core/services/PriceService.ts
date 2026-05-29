@@ -154,7 +154,7 @@ export class PriceService {
     for (const row of recentHistory) {
       const product = await prisma.product.findUnique({
         where: { id: row.product_id },
-        select: { id: true, name: true, imageUrl: true },
+        select: { id: true, name: true, slug: true, imageUrl: true },
       });
       if (product) {
         deals.push({
