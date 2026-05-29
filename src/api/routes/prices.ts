@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { PriceService } from '@/core/services/PriceService';
-import { successResponse } from '@/shared/utils';
+import { successResponse, paginatedResponse } from '@/shared/utils';
 
 const service = new PriceService();
 
@@ -28,9 +28,11 @@ export async function priceRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.get('/deals', async (request, reply) => {
-    const { limit } = request.query as { limit?: number };
-    const deals = await service.getDeals(limit ? Math.min(limit, 50) : 20);
+    const { limit, page } = request.query as { limit?: number; page?: number };
+    const safeLimit = limit ? Math.min(limit, 50) : 20;
+    const safePage = page && page > 0 ? page : 1;
+    const result = await service.getDeals(safeLimit, safePage);
 
-    return reply.send(successResponse(deals));
+    return reply.send(paginatedResponse(result.deals as any[], safePage, safeLimit, result.total));
   });
 }

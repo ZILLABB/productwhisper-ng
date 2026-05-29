@@ -115,12 +115,17 @@ export class PriceService {
     });
   }
 
-  async getDeals(limit = 20): Promise<unknown[]> {
-    const ck = cacheKey(CACHE_PREFIXES.PRICE, 'deals', limit);
-    const cached = await cacheGet<unknown[]>(ck);
+  async getDeals(limit = 20, page = 1): Promise<{ deals: unknown[]; total: number }> {
+    const ck = cacheKey(CACHE_PREFIXES.PRICE, 'deals', `${limit}:${page}`);
+    const cached = await cacheGet<{ deals: unknown[]; total: number }>(ck);
     if (cached) return cached;
 
-    // Find products with significant price drops
+    // Find products with significant price drops.
+    // Filters:
+    //  - drop must be between 3% and 50% (>50% is almost always a scam/different listing on Jiji)
+    //  - current price must be > ₦1,000 to exclude junk
+    const offset = (page - 1) * limit;
+
     const recentHistory = await prisma.$queryRaw<Array<{
       product_id: string;
       platform: string;
@@ -137,28 +142,72 @@ export class PriceService {
           recorded_at
         FROM price_history
         WHERE recorded_at > NOW() - INTERVAL '7 days'
+      ),
+      valid_drops AS (
+        SELECT
+          product_id,
+          platform,
+          current_price,
+          previous_price,
+          ((previous_price - current_price) / previous_price * 100) AS drop_percent
+        FROM recent_prices
+        WHERE previous_price IS NOT NULL
+          AND previous_price > current_price
+          AND current_price > 1000
+          AND ((previous_price - current_price) / previous_price * 100) BETWEEN 3 AND 50
       )
       SELECT
         product_id,
         platform,
         current_price::float,
         previous_price::float,
-        ((previous_price - current_price) / previous_price * 100)::float AS drop_percent
-      FROM recent_prices
-      WHERE previous_price IS NOT NULL AND previous_price > current_price
+        drop_percent::float
+      FROM valid_drops
       ORDER BY drop_percent DESC
-      LIMIT ${limit}
+      LIMIT ${limit} OFFSET ${offset}
     `;
+
+    // Get total count for pagination
+    const countResult = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      WITH recent_prices AS (
+        SELECT
+          product_id,
+          platform,
+          price AS current_price,
+          LAG(price) OVER (PARTITION BY product_id, platform ORDER BY recorded_at) AS previous_price
+        FROM price_history
+        WHERE recorded_at > NOW() - INTERVAL '7 days'
+      )
+      SELECT COUNT(*)::bigint AS count
+      FROM recent_prices
+      WHERE previous_price IS NOT NULL
+        AND previous_price > current_price
+        AND current_price > 1000
+        AND ((previous_price - current_price) / previous_price * 100) BETWEEN 3 AND 50
+    `;
+    const total = Number(countResult[0]?.count ?? 0);
 
     const deals = [];
     for (const row of recentHistory) {
       const product = await prisma.product.findUnique({
         where: { id: row.product_id },
-        select: { id: true, name: true, slug: true, imageUrl: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          listings: {
+            where: { imageUrl: { not: null } },
+            select: { imageUrl: true },
+            take: 1,
+          },
+        },
       });
       if (product) {
         deals.push({
-          ...product,
+          id: product.id,
+          name: product.name,
+          slug: product.slug,
+          imageUrl: product.listings[0]?.imageUrl ?? null,
           platform: row.platform,
           currentPrice: row.current_price,
           previousPrice: row.previous_price,
@@ -167,7 +216,8 @@ export class PriceService {
       }
     }
 
-    await cacheSet(ck, deals, cacheConfig.price);
-    return deals;
+    const result = { deals, total };
+    await cacheSet(ck, result, cacheConfig.price);
+    return result;
   }
 }
