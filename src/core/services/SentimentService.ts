@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { prisma } from '@/infrastructure/database/prisma';
 import { cacheGet, cacheSet, cacheConfig } from '@/infrastructure/cache/redis';
-import { cacheKey } from '@/shared/utils';
+import { cacheKey, productWhere } from '@/shared/utils';
 import { CACHE_PREFIXES } from '@/shared/constants';
 import { externalConfig } from '@/config';
 import { NotFoundError } from '@/shared/errors';
@@ -30,11 +30,11 @@ export class SentimentService {
     const cached = await cacheGet<SentimentResult>(ck);
     if (cached) return { sentiment: cached, cacheHit: true };
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findUnique({ where: productWhere(productId) });
     if (!product) throw new NotFoundError('Product');
 
     const analyses = await prisma.sentimentAnalysis.findMany({
-      where: { productId },
+      where: { productId: product.id },
       orderBy: { analyzedAt: 'desc' },
     });
 

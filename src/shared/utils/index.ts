@@ -29,6 +29,24 @@ export function paginatedResponse<T>(data: T[], page: number, limit: number, tot
   };
 }
 
+// ─── Product ID Resolution ────────────────────────────
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Check if a string is a UUID (vs a slug).
+ */
+export function isUuid(id: string): boolean {
+  return UUID_REGEX.test(id);
+}
+
+/**
+ * Build a Prisma `where` clause that works with both UUIDs and slugs.
+ */
+export function productWhere(id: string): { id: string } | { slug: string } {
+  return isUuid(id) ? { id } : { slug: id };
+}
+
 // ─── Nigerian Product Helpers ───────────────────────────
 
 export function classifyCondition(text: string, platform?: string): string {

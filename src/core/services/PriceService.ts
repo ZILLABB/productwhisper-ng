@@ -1,6 +1,6 @@
 import { prisma } from '@/infrastructure/database/prisma';
 import { cacheGet, cacheSet, cacheConfig } from '@/infrastructure/cache/redis';
-import { cacheKey, formatNaira } from '@/shared/utils';
+import { cacheKey, formatNaira, productWhere } from '@/shared/utils';
 import { CACHE_PREFIXES } from '@/shared/constants';
 import { NotFoundError } from '@/shared/errors';
 import type { PriceComparison, PlatformPrice, ConditionPrice, PricePoint } from '@/shared/types';
@@ -12,7 +12,7 @@ export class PriceService {
     if (cached) return { comparison: cached, cacheHit: true };
 
     const product = await prisma.product.findUnique({
-      where: { id: productId },
+      where: productWhere(productId),
       include: {
         listings: {
           where: { inStock: true },
@@ -89,11 +89,15 @@ export class PriceService {
     return { comparison, cacheHit: false };
   }
 
-  async getPriceHistory(productId: string, days = 30): Promise<PricePoint[]> {
+  async getPriceHistory(productIdOrSlug: string, days = 30): Promise<PricePoint[]> {
+    // Resolve slug → UUID if needed (priceHistory FK is always the UUID)
+    const product = await prisma.product.findUnique({ where: productWhere(productIdOrSlug) });
+    if (!product) return [];
+
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     const history = await prisma.priceHistory.findMany({
-      where: { productId, recordedAt: { gte: since } },
+      where: { productId: product.id, recordedAt: { gte: since } },
       orderBy: { recordedAt: 'asc' },
     });
 
